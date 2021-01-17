@@ -62,7 +62,7 @@ export class CooperHewittCollector {
             .map((node) => {
                 return node.getAttribute("src");
             })
-            .filter((imageURL) => {
+            .filter((imageURL): imageURL is string => {
                 return (
                     typeof imageURL === "string" && imageURL.length > 0
                 );
@@ -97,9 +97,16 @@ export class CooperHewittCollector {
         imageURL: string,
         stream: Readable,
     ): Promise<void> => {
-        return this.persister.persist(
-            path.basename(url.parse(imageURL).pathname),
-            stream,
-        );
+        const { pathname } = url.parse(imageURL);
+
+        if (pathname === null) {
+            this.logger
+                .child({ imageURL })
+                .error("cannot parse image URL");
+
+            return;
+        }
+
+        return this.persister.persist(path.basename(pathname), stream);
     };
 }

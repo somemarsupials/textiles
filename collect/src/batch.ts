@@ -12,10 +12,9 @@ class Worker {
         task: Task<R>,
     ): Promise<R[]> => {
         const results: R[] = [];
+        let job = queue.pop();
 
-        while (queue.length > 0) {
-            const job = queue.pop();
-
+        while (job) {
             try {
                 results.push(await task(job));
                 this.logger.child({ job }).debug("completed job");
@@ -24,6 +23,8 @@ class Worker {
                     .child({ job, error })
                     .error("failed to handle job");
             }
+
+            job = queue.pop();
         }
 
         return results;
