@@ -1,46 +1,63 @@
 import { EventEmitter } from "events";
+import { Logger } from "pino";
 
 type Job = string;
 type Task<R> = (job: Job) => Promise<R>;
 
 class Worker {
-  public process = async <R>(queue: Job[], task: Task<R>): Promise<R[]> => {
-    const results: R[] = []; 
+    public constructor(private readonly logger: Logger) {}
 
-    while (queue.length > 0) {
-      const job = queue.pop();
-      results.push(await task(job));
-    }
+    public process = async <R>(
+        queue: Job[],
+        task: Task<R>,
+    ): Promise<R[]> => {
+        const results: R[] = [];
 
-    return results;
-  }
+        while (queue.length > 0) {
+            const job = queue.pop();
+
+            try {
+                results.push(await task(job));
+                this.logger.child({ job }).debug("completed job");
+            } catch (error) {
+                this.logger
+                    .child({ job, error })
+                    .error("failed to handle job");
+            }
+        }
+
+        return results;
+    };
 }
 
 export class BatchProcessor {
-  public constructor(
-    private readonly workers: Worker[]
-  ) {}
+    public constructor(
+        private readonly workers: Worker[],
+        private readonly logger: Logger,
+    ) {}
 
-  public static withWorkers = (
-    count: number,
-  ): BatchProcessor => {
-    const workers = [...Array(count)].map(() => {
-      return new Worker();
-    });
+    public static withWorkers = (
+        count: number,
+        logger: Logger,
+    ): BatchProcessor => {
+        const workers = [...Array(count)].map(() => {
+            return new Worker(logger);
+        });
 
-    return new BatchProcessor(workers);
-  }
+        return new BatchProcessor(workers, logger);
+    };
 
-  public process = async <R>(
-    jobs: Job[],
-    task: Task<R>
-  ): Promise<R[]> => {
-    const results = await Promise.all(
-      this.workers.map(worker => {
-        return worker.process(jobs, task)
-      })
-    );
+    public process = async <R>(
+        jobs: Job[],
+        task: Task<R>,
+    ): Promise<R[]> => {
+        const results = await Promise.all(
+            this.workers.map((worker) => {
+                return worker.process(jobs, task);
+            }),
+        );
 
-    return results.reduce((acc, next) => acc.concat(next));
-  };
+        this.logger.debug("completed all jobs");
+        return results.reduce((acc, next) => acc.concat(next));
+    };
 }
