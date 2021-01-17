@@ -3,8 +3,59 @@ from tensorflow.python.keras import Sequential
 from tensorflow.python.keras.layers import Dense, BatchNormalization, Dropout
 
 
+def build_discriminator():
+    model = Sequential([
+        Dense(
+            256,
+            activation='relu',
+            kernel_initializer='he_uniform',
+            input_dim=self.input_dim
+            ),
+        Dropout(0.3),
+        Dense(128, activation='relu'),
+        Dropout(0.3),
+        Dense(1, activation='sigmoid'),
+        ])
+
+    model.compile(
+        loss='binary_crossentropy',
+        optimizer='adam',
+        metrics=['accuracy']
+        )
+
+    return model
+
+
+def build_generator():
+    return Sequential([
+        Dense(
+            128,
+            activation='relu',
+            kernel_initializer='he_uniform',
+            input_dim=self.latent_dim
+            ),
+        BatchNormalization(),
+        Dense(256, activation='relu'),
+        BatchNormalization(),
+        Dense(self.n_outputs, activation='linear'),
+        ])
+
+
+def build_gan(generator, discriminator):
+    discriminator.trainable = False
+
+    model = Sequential([
+        generator,
+        discriminator,
+        ])
+
+    model.compile(loss='binary_crossentropy', optimizer='adam')
+    return model
+
+
+
 class GAN:
-    def __init__(self):
+    def __init__(self, generator, discriminator, gan):
         self.img_rows = 28
         self.img_cols = 28
         self.channels = 1
@@ -13,37 +64,20 @@ class GAN:
         self.latent_dim = 100
         self.n_outputs = 2
         self.n_points = 50
+        self.discriminator = discriminator
+        self.generator = generator
+        self.gan = gan
 
-        self.discriminator = self.define_discriminator()
-        self.generator = self.define_generator()
-        self.gan = self.define_gan()
+    @staticmethod
+    def build(self):
+        generator = build_generator()
+        discriminator = build_discriminator()
 
-    def define_discriminator(self):
-        model = Sequential()
-        model.add(Dense(256, activation='relu', kernel_initializer='he_uniform', input_dim=self.input_dim))
-        model.add(Dropout(0.3))
-        model.add(Dense(128, activation='relu'))
-        model.add(Dropout(0.3))
-        model.add(Dense(1, activation='sigmoid'))
-        model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-        return model
-
-    def define_generator(self):
-        model = Sequential()
-        model.add(Dense(128, activation='relu', kernel_initializer='he_uniform', input_dim=self.latent_dim))
-        model.add(BatchNormalization())
-        model.add(Dense(256, activation='relu'))
-        model.add(BatchNormalization())
-        model.add(Dense(self.n_outputs, activation='linear'))
-        return model
-
-    def define_gan(self):
-        self.discriminator.trainable = False
-        model = Sequential()
-        model.add(self.generator)
-        model.add(self.discriminator)
-        model.compile(loss='binary_crossentropy', optimizer='adam')
-        return model
+        return GAN(
+            generator,
+            discriminator,
+            build_gan(generator, discriminator)
+            )
 
     def generate_latent_points(self):
         x_input = randn(self.latent_dim * self.n_points)
