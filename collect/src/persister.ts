@@ -13,13 +13,13 @@ export class ImagePersister {
     return new ImagePersister(directoryPath); 
   };
 
-  public persist = (fileName: string, image: Readable): Promise<void> => {
+ public persist = (fileName: string, image: Readable): Promise<void> => {
     return new Promise((resolve, reject) => {
       const destination = path.join(this.directoryPath, fileName);
       const stream = fs.createWriteStream(destination);
       image.pipe(stream);
-
-      stream.on("done", resolve);
+      image.on("end", resolve);
+      image.on("error", reject);
       stream.on("error", reject);
     });
   }

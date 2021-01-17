@@ -1,9 +1,11 @@
 import axios, { AxiosInstance } from "axios";
-import { JSDOM } from "jsdom";
+import { parse } from "node-html-parser";
 import * as path from "path";
 import * as url from "url";
+import { Readable } from "stream";
 
-import { ImagePersister } from "./imagePersister";
+import { BatchProcessor } from "./batch";
+import { ImagePersister } from "./persister";
 
 const createOneIndexedRange = maximum => {
   return [...Array(maximum)].map((_, index) => index + 1);
@@ -13,63 +15,92 @@ class CooperHewittCollector {
   private BASE_URL = "https://collection.cooperhewitt.org";
 
   public constructor(
-    private httpClient: AxiosInstance,
-    private imagePersister: ImagePersister,
+    private readonly httpClient: AxiosInstance,
+    private readonly persister: ImagePersister,
+    private readonly batchProcessor: BatchProcessor
   ) {}
 
-  public collectImagesOnPage = async (numbered: number): Promise<void> => {
-    const imageURLs = this.getImageURLsOnPage(
-      await this.fetchPageNumber(numbered)
-    );
+  public run = async (maxPageNumber: number): Promise<void> => {
+    const imageURLs = await this.prepareImageURLs(maxPageNumber);
+    return this.fetchImages(imageURLs);
+  }
 
-    const promises = imageURLs.map(async imageURL => {
-      const { pathname } = url.parse(imageURL);
-      const response = await this.httpClient.get(imageURL, { responseType: "stream" });
-      return this.imagePersister.persist(path.basename(pathname), response.data);
+  private prepareImageURLs = async (upTo: number): Promise<string[]> => {
+    const pageURLs = [...Array(upTo)].map((_, index) => {
+      return this.buildSearchResultPageURL(index + 1);
     });
 
-    await Promise.all(promises);
-  }
-  
-  private getImageURLsOnPage = (source: string): string[] => {
-    const nodes = new JSDOM(source)
-      .window
-      .document
-      .querySelectorAll(".object-image img")
+    const results = await this.batchProcessor.process(
+      pageURLs,
+      this.scanResultsPage
+    )
 
-    return Array.from(nodes)
+    return results.reduce((acc, next) => acc.concat(next));
+  }
+
+  private buildSearchResultPageURL = (numbered: number): string => {
+    return `${this.BASE_URL}/types/35251739/page${numbered}`;
+  }
+
+  private scanResultsPage = async (at: string): Promise<string[]> => {
+    console.log(`scanning page ${at}`);
+
+    return this.getImageURLsOnPage(
+      (await this.httpClient.get(at)).data
+    );
+  }
+
+  private getImageURLsOnPage = (source: string): string[] => {
+    return parse(source)
+      .querySelectorAll(".object-image img")
       .filter(node => {
-        return !node.classList.contains("image-not-available");
+        return !node.classNames.includes("image-not-available");
       })
       .map(node => {
         return node.getAttribute("src");
+      })
+      .filter(imageURL => {
+        return typeof imageURL === "string" && imageURL.length > 0;
       })
       .map(imageURL => {
         return imageURL.replace("_n.jpg", "_b.jpg");
       });
   }
 
-  private fetchPageNumber = async (value: number): Promise<string> => {
-    console.log(`fetching page number ${value}...`);
-    const response = await this.httpClient.get(`${this.BASE_URL}/types/35251739/page${value}`);
+  private fetchImages = async (urls: string[]): Promise<void> => {
+    await this.batchProcessor.process(urls, async imageURL => {
+        return this.persistImage(
+          imageURL,
+          await this.fetchImage(imageURL)
+        );
+    });
+  };
+
+  private fetchImage = async (imageURL: string): Promise<Readable> => {
+    console.log(`fetching image ${imageURL}`);
+
+    const response = await this.httpClient.get(imageURL, {
+      responseType: "stream"
+    });
+
     return response.data;
+  }
+
+  private persistImage = async (imageURL: string, stream: Readable): Promise<void> => {
+    return this.persister.persist(
+      path.basename(url.parse(imageURL).pathname),
+      stream
+    );
   }
 }
 
-type Action = () => void;
+const persister = ImagePersister.usingDirectory("data");
+const batchProcessor = BatchProcessor.withWorkers(10);
 
-const doWithDelay = async (action: Action, delay: number): Promise<void> => {
-  return new Promise((resolve, reject) => {
-    setTimeout(async () => {
-      try {
-        return resolve(await action());
-      } catch (error) {
-        return reject(error);
-      }
-    }, delay);
-  });
-}
+const collector = new CooperHewittCollector(
+  axios,
+  persister,
+  batchProcessor
+);
 
-const imagePersister = ImagePersister.usingDirectory("data");
-const collector = new CooperHewittCollector(axios, imagePersister);
-collector.collectImagesOnPage(1).catch(console.error);
+collector.run(5).catch(error => console.error(error));
